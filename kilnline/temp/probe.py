@@ -19,6 +19,7 @@ class Probe:
     zone: str
     calibrated: bool
     calibrated_by: str
+    calibrated_at: float
     span_c: float
 
     def as_dict(self) -> dict[str, Any]:
@@ -27,6 +28,7 @@ class Probe:
             "zone": self.zone,
             "calibrated": self.calibrated,
             "calibrated_by": self.calibrated_by,
+            "calibrated_at": self.calibrated_at,
             "span_c": self.span_c,
         }
 
@@ -36,15 +38,17 @@ class Reading:
     probe_id: str
     zone: str
     value_c: float
+    at: float
 
     def age_seconds(self, now: float) -> float:
-        return 0.0
+        return max(0.0, float(now) - self.at)
 
     def as_dict(self) -> dict[str, Any]:
         return {
             "probe_id": self.probe_id,
             "zone": self.zone,
             "value_c": self.value_c,
+            "at": self.at,
         }
 
 
@@ -69,6 +73,7 @@ class ProbeBank:
             zone=str(zone),
             calibrated=False,
             calibrated_by="",
+            calibrated_at=0.0,
             span_c=0.0,
         )
         self._probes[label] = probe
@@ -81,6 +86,7 @@ class ProbeBank:
             zone=current.zone,
             calibrated=True,
             calibrated_by=str(by),
+            calibrated_at=float(at),
             span_c=float(span_c),
         )
         self._probes[current.probe_id] = probe
@@ -91,7 +97,7 @@ class ProbeBank:
         value = float(value_c)
         if value != value:
             raise ValidationError("probe reading must be a number", probe=probe.probe_id)
-        reading = Reading(probe_id=probe.probe_id, zone=probe.zone, value_c=value)
+        reading = Reading(probe_id=probe.probe_id, zone=probe.zone, value_c=value, at=float(at))
         self._readings[probe.probe_id] = reading
         return reading
 
@@ -128,10 +134,14 @@ class ProbeBank:
         return max(values) - min(values)
 
     def calibration_age_s(self, probe_id: str, *, now: float) -> float | None:
-        return None
+        probe = self.probe(probe_id)
+        if not probe.calibrated:
+            return None
+        return max(0.0, float(now) - probe.calibrated_at)
 
     def is_fresh(self, probe_id: str, *, now: float) -> bool:
-        return self.probe(probe_id).calibrated
+        age = self.calibration_age_s(probe_id, now=now)
+        return age is not None and age <= self._max_age_s
 
     def require_fresh(self, probe_id: str, *, now: float) -> Probe:
         probe = self.probe(probe_id)
@@ -140,10 +150,22 @@ class ProbeBank:
                 "probe has never been calibrated",
                 probe=probe.probe_id,
             )
+        age = self.calibration_age_s(probe.probe_id, now=now)
+        if age > self._max_age_s:
+            raise GenerationExpired(
+                "probe calibration is older than its age budget",
+                probe=probe.probe_id,
+                age_s=age,
+                max_age_s=self._max_age_s,
+            )
         return probe
 
     def stale(self, *, now: float) -> list[str]:
-        return []
+        return sorted(
+            probe.probe_id
+            for probe in self._probes.values()
+            if probe.calibrated and not self.is_fresh(probe.probe_id, now=now)
+        )
 
     def zone_is_usable(self, zone: str, *, now: float) -> bool:
         members = [probe for probe in self._probes.values() if probe.zone == zone]
@@ -160,7 +182,7 @@ class ProbeBank:
             "probes": [
                 {
                     **probe.as_dict(),
-                    "age_s": None,
+                    "age_s": self.calibration_age_s(probe.probe_id, now=now),
                     "fresh": self.is_fresh(probe.probe_id, now=now),
                     "reading": None
                     if probe.probe_id not in self._readings

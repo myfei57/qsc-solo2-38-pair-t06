@@ -149,7 +149,7 @@ class FiringCurve:
         return float(current_c) + budget * (1.0 if delta > 0 else -1.0)
 
     def window_at(self, elapsed_s: float, *, band_c: float) -> tuple[float, float]:
-        target = self.peak_c
+        target = self.target_at(elapsed_s)
         return target - float(band_c), target + float(band_c)
 
     def as_dict(self) -> dict[str, Any]:
