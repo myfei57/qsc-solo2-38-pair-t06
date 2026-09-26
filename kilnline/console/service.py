@@ -355,7 +355,7 @@ class ControlService:
         readings: dict[str, float | None] = {}
         for zone in self.settings.zones:
             try:
-                readings[zone] = self.probes.zone_average(zone)
+                readings[zone] = self.probes.zone_average(zone, now=self._now())
             except NotFoundError:
                 readings[zone] = None
         return readings
@@ -1223,7 +1223,7 @@ class ControlService:
 
     def _measured(self, zone: str) -> float:
         try:
-            return self.probes.zone_average(zone)
+            return self.probes.zone_average(zone, now=self._now())
         except NotFoundError:
             return self._zone_temperature[zone]
 
